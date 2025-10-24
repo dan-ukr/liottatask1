@@ -1,0 +1,124 @@
+import requests
+import itertools
+import time
+from tqdm import tqdm
+import pandas as pd
+
+def get_youtube_data(query, max_results, api_keys=None):
+    if not api_keys:
+        api_keys = ['AIzaSyC0UPPF33XNz759MUy0ip8SqNkL20ArbUA','AIzaSyABCD1234abcd5678efgh91011ijklmn','AIzaSyDzKfzKP7KL44yV2IdQ4DrVGrjWk3pj6_w']
+    key_cycle = itertools.cycle(api_keys)
+
+    base_search = "https://www.googleapis.com/youtube/v3/search"
+    base_videos = "https://www.googleapis.com/youtube/v3/videos"
+    base_comments = "https://www.googleapis.com/youtube/v3/commentThreads"
+
+    results = []
+    next_page_token = None
+
+    with tqdm(total=max_results, desc="Fetching YouTube data") as pbar:
+        while len(results) < max_results:
+            key = next(key_cycle)
+            search_params = {
+                "part": "id",
+                "q": query,
+                "type": "video",
+                "maxResults": min(50, max_results - len(results)),
+                "pageToken": next_page_token,
+                "key": key,
+                "relevanceLanguage": "en"
+            }
+            r = requests.get(base_search, params=search_params)
+            data = r.json()
+
+            if "error" in data:
+                print("⚠️ API error:", data["error"]["message"])
+                continue
+
+            items = data.get("items", [])
+            if not items:
+                break
+
+            for item in items:
+                vid = item["id"]["videoId"]
+                key = next(key_cycle)
+
+                # ▶ Отримуємо опис
+                v = requests.get(base_videos, params={
+                    "part": "snippet",
+                    "id": vid,
+                    "key": key
+                }).json()
+
+                snippet = v.get("items", [{}])[0].get("snippet", {})
+                title = snippet.get("title", "")
+                description = snippet.get("description", "")
+                
+                comments = []
+                next_token = None
+                while True:
+                    key = next(key_cycle)
+                    params = {
+                        "part": "snippet",
+                        "videoId": vid,
+                        "maxResults": 50,
+                        "pageToken": next_token,
+                        "key": key
+                    }
+                    c = requests.get(base_comments, params=params).json()
+                    if "error" in c:
+                        msg = c["error"].get("message", "unknown")
+                        print(f"⚠️ Comment error ({vid}): {msg}")
+                        break
+
+                    for ci in c.get("items", []):
+                        top = ci["snippet"]["topLevelComment"]["snippet"]
+                        comments.append({
+                            "commentId": ci["id"],
+                            "text": top.get("textDisplay", ""),
+                            "likes": top.get("likeCount", 0)
+                        })
+
+                    next_token = c.get("nextPageToken")
+                    if not next_token or len(comments) > 100:
+                        break
+                    time.sleep(0.25)
+
+                results.append({
+                    "videoId": vid,
+                    "title": title,
+                    "description": description,
+                    "comments": comments
+                })
+                pbar.update(1)
+
+                if len(results) >= max_results:
+                    break
+
+            next_page_token = data.get("nextPageToken")
+            if not next_page_token:
+                break
+            time.sleep(0.3)
+
+    return results
+
+
+
+videos = get_youtube_data("Trump tariff", max_results=150, api_keys=['AIzaSyC0UPPF33XNz759MUy0ip8SqNkL20ArbUA','AIzaSyABCD1234abcd5678efgh91011ijklmn','AIzaSyDzKfzKP7KL44yV2IdQ4DrVGrjWk3pj6_w'])
+display(videos)
+rows = []
+for v in videos:
+    for c in v["comments"]:
+        rows.append({
+            "videoId": v["videoId"],
+            "title": v["title"],
+            "description": v["description"][:150],
+            "commentId": c["commentId"],
+            "comment": c["text"],
+            "likes": c["likes"]
+        })
+
+df = pd.DataFrame(rows)
+
+df.to_csv("youtube_results_tariffs.csv", index=False, encoding="utf-8-sig")
+df.to_excel("youtube_results_tariffs.xlsx", index=False)
