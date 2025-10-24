@@ -45,7 +45,6 @@ def get_youtube_data(query, max_results, api_keys=None):
                 vid = item["id"]["videoId"]
                 key = next(key_cycle)
 
-                # ▶ Отримуємо опис
                 v = requests.get(base_videos, params={
                     "part": "snippet",
                     "id": vid,
